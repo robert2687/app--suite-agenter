@@ -1,0 +1,6 @@
+{
+  "name": "AI App Suite",
+  "description": "An integrated suite of AI-powered tools. Design and chat with custom agents, generate images and code, analyze data, and simulate complex AI agent behavior with a Digital Twin.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
