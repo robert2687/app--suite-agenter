@@ -82,6 +82,7 @@ const ChatView: React.FC = () => {
     const [useSearch, setUseSearch] = useState(false);
     const [useTools, setUseTools] = useState(false);
     const [toolCallMessage, setToolCallMessage] = useState<string | null>(null);
+    const [toolSuggestion, setToolSuggestion] = useState<'calculator' | 'search' | null>(null);
 
     const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -95,6 +96,36 @@ const ChatView: React.FC = () => {
         }
     }, [messages, toolCallMessage]);
 
+    useEffect(() => {
+        const checkInputForTools = () => {
+            const trimmedInput = input.trim().toLowerCase();
+            if (trimmedInput === '') {
+                setToolSuggestion(null);
+                return;
+            }
+
+            // Regex for simple math expressions (e.g., "5*7", "100 + 20")
+            const mathRegex = /(\d+(\.\d+)?\s*[\+\-\*\/]\s*\d+(\.\d+)?)/;
+            const isMathQuery = mathRegex.test(trimmedInput) || trimmedInput.includes("calculate");
+
+            // Keywords for search queries
+            const searchKeywords = ['who is', 'what is', 'when was', 'where is', 'latest news', 'what happened', 'how to'];
+            const isSearchQuery = searchKeywords.some(keyword => trimmedInput.startsWith(keyword));
+
+            if (isMathQuery && !useTools) {
+                setToolSuggestion('calculator');
+            } else if (isSearchQuery && !useSearch) {
+                setToolSuggestion('search');
+            } else {
+                setToolSuggestion(null);
+            }
+        };
+
+        const debounceTimer = setTimeout(checkInputForTools, 400);
+
+        return () => clearTimeout(debounceTimer);
+    }, [input, useTools, useSearch]);
+
     const handleSendMessage = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || isLoading) return;
@@ -107,6 +138,7 @@ const ChatView: React.FC = () => {
         setIsLoading(true);
         setError(null);
         setToolCallMessage(null);
+        setToolSuggestion(null);
 
         try {
             const onToolCall = (name: string, args: any) => {
@@ -154,6 +186,17 @@ const ChatView: React.FC = () => {
             setToolCallMessage(null);
         }
     }, [input, isLoading, messages, useSearch, useTools]);
+    
+    const handleSuggestionClick = (suggestion: 'calculator' | 'search') => {
+        if (suggestion === 'calculator') {
+            setUseTools(true);
+            setUseSearch(false);
+        } else {
+            setUseSearch(true);
+            setUseTools(false);
+        }
+        setToolSuggestion(null);
+    };
 
     return (
         <div className="flex flex-col h-full p-4 bg-gray-900">
@@ -173,9 +216,38 @@ const ChatView: React.FC = () => {
             {error && <div className="p-2 my-2 text-sm text-red-400 bg-red-900/50 rounded-md">{error}</div>}
             
             <div className="mt-4">
-              <div className="flex items-center justify-end gap-4 mb-2 pr-1">
-                <Toggle label="Search the web" enabled={useSearch} onChange={setUseSearch} />
-                <Toggle label="Use Tools" enabled={useTools} onChange={setUseTools} />
+              <div className="flex items-center justify-between gap-4 mb-2 pr-1">
+                <div className="h-8 flex items-center">
+                    {toolSuggestion && (
+                        <div className="flex justify-start items-center gap-2 animate-fade-in">
+                            <span className="text-sm text-gray-400">Suggestion:</span>
+                            <button
+                                onClick={() => handleSuggestionClick(toolSuggestion)}
+                                className="px-3 py-1 text-xs font-medium text-indigo-200 bg-indigo-900/50 hover:bg-indigo-700/80 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                {toolSuggestion === 'calculator' ? 'Enable Calculator' : 'Enable Web Search'}?
+                            </button>
+                        </div>
+                    )}
+                </div>
+                <div className="flex items-center gap-4">
+                    <Toggle 
+                      label="Search the web" 
+                      enabled={useSearch} 
+                      onChange={(enabled) => {
+                        setUseSearch(enabled);
+                        if (enabled) setUseTools(false);
+                      }} 
+                    />
+                    <Toggle 
+                      label="Use Tools" 
+                      enabled={useTools} 
+                      onChange={(enabled) => {
+                        setUseTools(enabled);
+                        if (enabled) setUseSearch(false);
+                      }} 
+                    />
+                </div>
               </div>
               <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
                   <input

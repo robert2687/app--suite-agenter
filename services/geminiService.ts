@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse, Content, Type, Tool } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Content, Type, Tool, Modality } from "@google/genai";
 import type { ChatMessage, AgentConfig, AnalysisResult } from "../types";
 
 // Ensure the API key is available from environment variables
@@ -108,11 +108,12 @@ export async function runAgentStream(
             ];
 
             // Make the second call to get the final response, which can be streamed.
-            return await ai.models.generateContentStream({
+            // FIX: Cast the result to GeminiStream to match the expected return type, as the library types may not be specific enough.
+            return (await ai.models.generateContentStream({
                 model,
                 contents: [...contents, ...toolResponseContent],
                 config: apiConfig
-            });
+            })) as GeminiStream;
         } else {
              // No tool call was made, but we used the non-streaming API.
              // We can wrap the response in a fake stream to keep the UI logic consistent.
@@ -127,11 +128,12 @@ export async function runAgentStream(
     }
 
     // Default behavior for agents without a calculator tool (e.g., search-only or no tools).
-    return await ai.models.generateContentStream({
+    // FIX: Cast the result to GeminiStream to match the expected return type.
+    return (await ai.models.generateContentStream({
         model,
         contents,
         config: apiConfig,
-    });
+    })) as GeminiStream;
 }
 
 /** For ChatView */
@@ -157,7 +159,7 @@ export async function generateChatResponseStream(
 /** For ImageView */
 export async function generateImages(prompt: string): Promise<string[]> {
     const response = await ai.models.generateImages({
-        model: 'imagen-3.0-generate-002',
+        model: 'imagen-4.0-generate-001',
         prompt: prompt,
         config: {
           numberOfImages: 4,
@@ -167,6 +169,47 @@ export async function generateImages(prompt: string): Promise<string[]> {
     });
 
     return response.generatedImages.map(img => img.image.imageBytes);
+}
+
+/** For ImageView - Editing */
+export async function editImage(base64ImageData: string, prompt: string): Promise<{ image: string; text: string | null }> {
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image-preview',
+        contents: {
+            parts: [
+                {
+                    inlineData: {
+                        data: base64ImageData,
+                        mimeType: 'image/jpeg', // The generation function creates JPEGs
+                    },
+                },
+                {
+                    text: prompt,
+                },
+            ],
+        },
+        config: {
+            responseModalities: [Modality.IMAGE, Modality.TEXT],
+        },
+    });
+
+    let newImage: string | null = null;
+    let newText: string | null = null;
+
+    // The response can contain multiple parts (image, text)
+    for (const part of response.candidates[0].content.parts) {
+        if (part.text) {
+            newText = part.text;
+        } else if (part.inlineData) {
+            newImage = part.inlineData.data;
+        }
+    }
+    
+    if (!newImage) {
+        throw new Error("The model did not return an edited image. It may have refused the request. Response: " + (newText || "No text response."));
+    }
+
+    return { image: newImage, text: newText };
 }
 
 /** For DataAnalysisView */

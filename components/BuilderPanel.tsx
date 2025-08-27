@@ -80,8 +80,22 @@ const BuilderPanel: React.FC<BuilderPanelProps> = ({ onCreateAgent }) => {
           </div>
           <div className="space-y-3 p-3 bg-gray-900/50 rounded-lg">
              <h3 className="font-semibold text-gray-200">Tools</h3>
-             <Toggle label="Enable Calculator" enabled={useCalculator} onChange={setUseCalculator} />
-             <Toggle label="Enable Web Search" enabled={useSearch} onChange={setUseSearch} />
+             <Toggle 
+                label="Enable Calculator" 
+                enabled={useCalculator} 
+                onChange={(enabled) => {
+                    setUseCalculator(enabled);
+                    if (enabled) setUseSearch(false);
+                }} 
+             />
+             <Toggle 
+                label="Enable Web Search" 
+                enabled={useSearch} 
+                onChange={(enabled) => {
+                    setUseSearch(enabled);
+                    if (enabled) setUseCalculator(false);
+                }}
+             />
           </div>
           <div>
             <button

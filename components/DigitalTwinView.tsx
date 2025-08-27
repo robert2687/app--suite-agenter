@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AIAgentDigitalTwin, getDefaultTwinState } from '../services/digitalTwinService';
-import type { DigitalTwinState, IAI_Agent_DigitalTwin } from '../types';
+import type { DigitalTwinState, IAI_Agent_DigitalTwin, DecisionRule } from '../types';
 import { Spinner } from './ui/Spinner';
 
 const Accordion: React.FC<{ title: string; children: React.ReactNode; defaultOpen?: boolean }> = ({ title, children, defaultOpen = false }) => {
@@ -19,6 +19,7 @@ const Accordion: React.FC<{ title: string; children: React.ReactNode; defaultOpe
     );
 };
 
+
 const DigitalTwinView: React.FC = () => {
     const [twin, setTwin] = useState<IAI_Agent_DigitalTwin | null>(null);
     const [twinState, setTwinState] = useState<DigitalTwinState | null>(null);
@@ -28,6 +29,15 @@ const DigitalTwinView: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const stateDisplayRef = useRef<HTMLDivElement>(null);
     const [log, setLog] = useState<{ role: 'user' | 'agent', content: string }[]>([]);
+    
+    // --- State for the new rule editor ---
+    const [newRule, setNewRule] = useState<Omit<DecisionRule, 'actionPayload'> & { actionPayload: string }>({
+        name: 'Question Rule',
+        condition: "context.isQuestion === true",
+        actionType: 'FIXED_RESPONSE',
+        actionPayload: '"I see you have a question. Let me check on that for you."',
+        priority: 8
+    });
 
     useEffect(() => {
         handleInitializeOrUpdate();
@@ -87,6 +97,74 @@ const DigitalTwinView: React.FC = () => {
         setError(null);
     }, [twin]);
     
+    const updateConfig = (updater: (config: DigitalTwinState) => DigitalTwinState) => {
+        try {
+            const currentConfig = JSON.parse(configDraft);
+            const newConfig = updater(currentConfig);
+            setConfigDraft(JSON.stringify(newConfig, null, 2));
+            setError(null);
+        } catch (e) {
+            setError('Could not update rule. The main configuration JSON is invalid.');
+        }
+    };
+
+    const handleAddRule = () => {
+        let parsedPayload;
+        try {
+            parsedPayload = JSON.parse(newRule.actionPayload);
+        } catch (e) {
+            if (newRule.actionType === 'FIXED_RESPONSE') {
+                // For fixed response, allow non-JSON strings. We'll remove quotes if they exist.
+                parsedPayload = newRule.actionPayload.replace(/^"|"$/g, '');
+            } else {
+                setError('Action Payload must be a valid JSON for the selected Action Type.');
+                return;
+            }
+        }
+        
+        const ruleToAdd: DecisionRule = {
+            ...newRule,
+            priority: Number(newRule.priority) || 0,
+            actionPayload: parsedPayload
+        };
+
+        updateConfig(config => {
+            if (!config.decisionLogic) config.decisionLogic = { rules: [] };
+            config.decisionLogic.rules.push(ruleToAdd);
+            return config;
+        });
+    };
+
+    const handleDeleteRule = (index: number) => {
+        updateConfig(config => {
+            if (config.decisionLogic?.rules) {
+                config.decisionLogic.rules.splice(index, 1);
+            }
+            return config;
+        });
+    };
+    
+    const getPayloadHelperText = () => {
+        switch (newRule.actionType) {
+            case 'FIXED_RESPONSE':
+                return 'Example: "This is the exact text to be returned."';
+            case 'LLM_CALL':
+                return 'Example: { "promptName": "greeting_response", "vars": {} }';
+            case 'TOOL_USE':
+                return 'Example: { "toolName": "calculator", "args": { "operation": "add" } }';
+            default:
+                return 'Enter payload as a JSON string.';
+        }
+    };
+    
+    // Safely parse config for UI rendering
+    let parsedConfigForUI: DigitalTwinState | null = null;
+    try {
+        parsedConfigForUI = JSON.parse(configDraft);
+    } catch {
+        // Silently fail, error is shown elsewhere
+    }
+
     return (
         <div className="h-full flex flex-col md:flex-row bg-gray-900 text-gray-100">
             {/* --- CONFIGURATION PANEL --- */}
@@ -98,6 +176,46 @@ const DigitalTwinView: React.FC = () => {
                      <button onClick={() => setConfigDraft(JSON.stringify(getDefaultTwinState(), null, 2))} className="w-full p-2 bg-gray-600 hover:bg-gray-700 rounded-md font-semibold transition-colors">Reset to Default</button>
                 </div>
                 {error && <div className="p-2 text-sm text-red-400 bg-red-900/50 rounded-md">{error}</div>}
+                
+                <Accordion title="Decision Logic Editor">
+                    <div className="space-y-4">
+                        {/* --- Existing Rules List --- */}
+                        <div className="space-y-2">
+                             <h4 className="font-semibold text-gray-300">Current Rules:</h4>
+                             {parsedConfigForUI?.decisionLogic?.rules?.length ? (
+                                parsedConfigForUI.decisionLogic.rules.map((rule, index) => (
+                                    <div key={index} className="bg-gray-900/50 p-2 rounded-md text-sm">
+                                        <div className="flex justify-between items-start">
+                                            <p className="font-bold text-indigo-300">{rule.priority}: {rule.name}</p>
+                                            <button onClick={() => handleDeleteRule(index)} className="text-red-400 hover:text-red-300 text-lg">&times;</button>
+                                        </div>
+                                        <p className="text-xs text-gray-400 font-mono">IF: {rule.condition}</p>
+                                        <p className="text-xs text-gray-400 font-mono">DO: {rule.actionType}</p>
+                                    </div>
+                                ))
+                             ) : <p className="text-xs text-gray-500">No rules defined.</p>}
+                        </div>
+                        
+                        {/* --- Add New Rule Form --- */}
+                        <div className="space-y-3 pt-4 border-t border-gray-700">
+                            <h4 className="font-semibold text-gray-300">Add New Rule:</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                                <input type="text" placeholder="Name" value={newRule.name} onChange={e => setNewRule(r => ({ ...r, name: e.target.value }))} className="p-1.5 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                <input type="number" placeholder="Priority" value={newRule.priority} onChange={e => setNewRule(r => ({ ...r, priority: parseInt(e.target.value, 10) || 0 }))} className="p-1.5 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            </div>
+                            <input type="text" placeholder="Condition (e.g., context.input.includes('?'))" value={newRule.condition} onChange={e => setNewRule(r => ({ ...r, condition: e.target.value }))} className="w-full p-1.5 bg-gray-700 border border-gray-600 rounded-md text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            <select value={newRule.actionType} onChange={e => setNewRule(r => ({ ...r, actionType: e.target.value as DecisionRule['actionType'] }))} className="w-full p-1.5 bg-gray-700 border border-gray-600 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                <option value="FIXED_RESPONSE">Fixed Response</option>
+                                <option value="LLM_CALL">LLM Call</option>
+                                <option value="TOOL_USE">Tool Use</option>
+                            </select>
+                            <textarea placeholder="Action Payload" value={newRule.actionPayload} onChange={e => setNewRule(r => ({...r, actionPayload: e.target.value}))} rows={3} className="w-full p-1.5 bg-gray-700 border border-gray-600 rounded-md text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            <p className="text-xs text-gray-500">{getPayloadHelperText()}</p>
+                            <button onClick={handleAddRule} className="w-full p-2 bg-indigo-700/80 hover:bg-indigo-700 rounded-md font-semibold text-sm transition-colors">Add Rule</button>
+                        </div>
+                    </div>
+                </Accordion>
+
                 <Accordion title="JSON Configuration">
                     <textarea
                         value={configDraft}

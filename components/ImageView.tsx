@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback } from 'react';
-import { generateImages } from '../services/geminiService';
+import { generateImages, editImage } from '../services/geminiService';
 import { Spinner } from './ui/Spinner';
 
 const ImageView: React.FC = () => {
@@ -8,6 +8,24 @@ const ImageView: React.FC = () => {
     const [images, setImages] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // --- State for the editing modal ---
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingState, setEditingState] = useState<{
+        index: number;
+        originalData: string;
+        prompt: string;
+        editedData: string | null;
+        isLoading: boolean;
+        error: string | null;
+    }>({
+        index: -1,
+        originalData: '',
+        prompt: 'Add a small, friendly robot companion next to the cat.',
+        editedData: null,
+        isLoading: false,
+        error: null,
+    });
 
     const handleGenerate = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
@@ -32,11 +50,48 @@ const ImageView: React.FC = () => {
         }
     }, [prompt, isLoading]);
 
+    // --- Handlers for editing logic ---
+    const handleOpenModal = (index: number) => {
+        setEditingState({
+            index,
+            originalData: images[index],
+            prompt: 'Make the wizard hat blue.',
+            editedData: null,
+            isLoading: false,
+            error: null,
+        });
+        setIsModalOpen(true);
+    };
+
+    const handleCloseModal = () => setIsModalOpen(false);
+
+    const handleStartEdit = async () => {
+        if (!editingState.prompt.trim() || editingState.isLoading) return;
+        setEditingState(prev => ({ ...prev, isLoading: true, error: null }));
+        try {
+            const result = await editImage(editingState.originalData, editingState.prompt);
+            setEditingState(prev => ({ ...prev, editedData: result.image, isLoading: false }));
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setEditingState(prev => ({ ...prev, error: `Edit failed: ${errorMessage}`, isLoading: false }));
+        }
+    };
+    
+    const handleAcceptEdit = () => {
+        if (editingState.editedData) {
+            setImages(currentImages => 
+                currentImages.map((img, i) => i === editingState.index ? editingState.editedData! : img)
+            );
+        }
+        handleCloseModal();
+    };
+
+
     return (
         <div className="p-4 sm:p-6 md:p-8 h-full flex flex-col">
             <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-white">Image Generation</h2>
-                <p className="text-gray-400 mt-2">Describe an image and let AI bring it to life.</p>
+                <h2 className="text-3xl font-bold text-white">Image Generation & Editing</h2>
+                <p className="text-gray-400 mt-2">Describe an image to create it, then click to edit with AI.</p>
             </div>
             
             <form onSubmit={handleGenerate} className="w-full max-w-2xl mx-auto mb-6">
@@ -89,17 +144,85 @@ const ImageView: React.FC = () => {
                 {images.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4">
                         {images.map((base64Image, index) => (
-                            <div key={index} className="aspect-square bg-gray-800 rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition-transform duration-300">
+                            <div 
+                                key={index} 
+                                className="aspect-square bg-gray-800 rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition-transform duration-300 cursor-pointer group"
+                                onClick={() => handleOpenModal(index)}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => e.key === 'Enter' && handleOpenModal(index)}
+                            >
                                 <img
                                     src={`data:image/jpeg;base64,${base64Image}`}
                                     alt={`Generated image ${index + 1}`}
                                     className="w-full h-full object-cover"
                                 />
+                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all flex items-center justify-center">
+                                    <p className="text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity">Edit</p>
+                                </div>
                             </div>
                         ))}
                     </div>
                 )}
             </div>
+            
+            {isModalOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50 p-4 animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="edit-image-title">
+                    <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+                        <header className="p-4 border-b border-gray-700 flex justify-between items-center">
+                            <h2 id="edit-image-title" className="text-xl font-bold text-white">Edit Image</h2>
+                            <button onClick={handleCloseModal} className="text-gray-400 hover:text-white">&times;</button>
+                        </header>
+
+                        <main className="p-4 flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                           {/* Original Image */}
+                           <div>
+                                <h3 className="text-lg font-semibold text-gray-300 mb-2 text-center">Original</h3>
+                                <img src={`data:image/jpeg;base64,${editingState.originalData}`} alt="Original for editing" className="w-full h-auto object-contain rounded-md aspect-square bg-gray-900"/>
+                           </div>
+                           {/* Edited Image */}
+                           <div className="flex flex-col justify-center items-center">
+                                <h3 className="text-lg font-semibold text-gray-300 mb-2 text-center">Edited</h3>
+                                <div className="w-full aspect-square bg-gray-900 rounded-md flex justify-center items-center">
+                                    {editingState.isLoading && <Spinner size="lg" />}
+                                    {!editingState.isLoading && editingState.editedData && (
+                                        <img src={`data:image/jpeg;base64,${editingState.editedData}`} alt="Edited result" className="w-full h-auto object-contain rounded-md"/>
+                                    )}
+                                    {!editingState.isLoading && !editingState.editedData && (
+                                        <p className="text-gray-500">Your edit will appear here.</p>
+                                    )}
+                                </div>
+                           </div>
+                        </main>
+
+                        <footer className="p-4 border-t border-gray-700 space-y-3">
+                            {editingState.error && <p className="text-red-400 text-sm text-center">{editingState.error}</p>}
+                            <div className="flex flex-col sm:flex-row items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={editingState.prompt}
+                                    onChange={(e) => setEditingState(p => ({...p, prompt: e.target.value}))}
+                                    placeholder="e.g., Add a red scarf"
+                                    disabled={editingState.isLoading}
+                                    className="flex-1 w-full p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                                />
+                                <button
+                                    onClick={handleStartEdit}
+                                    disabled={editingState.isLoading || !editingState.prompt.trim()}
+                                    className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:bg-gray-600 flex items-center justify-center gap-2"
+                                >
+                                    {editingState.isLoading ? <Spinner /> : null}
+                                    Generate Edit
+                                </button>
+                            </div>
+                             <div className="flex justify-end gap-2">
+                                <button onClick={handleCloseModal} className="px-4 py-2 bg-gray-600 text-sm font-semibold rounded-lg hover:bg-gray-700">Close</button>
+                                <button onClick={handleAcceptEdit} disabled={!editingState.editedData} className="px-4 py-2 bg-green-600 text-sm font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-600/50">Accept & Close</button>
+                             </div>
+                        </footer>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
