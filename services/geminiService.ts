@@ -171,6 +171,79 @@ export async function generateImages(prompt: string): Promise<string[]> {
     return response.generatedImages.map(img => img.image.imageBytes);
 }
 
+// List of steps for video generation progress
+export const VIDEO_GENERATION_STEPS = [
+    "Parsing prompt & initializing generative model",
+    "Storyboarding scenes and establishing motion",
+    "Generating primary visual keyframes",
+    "Rendering intermediate frames (this may take a while)",
+    "Applying advanced color grading and visual effects",
+    "Compositing visual layers and encoding video stream",
+    "Performing quality assurance checks",
+    "Downloading video data",
+    "Finalizing your video",
+];
+
+/**
+ * Generates a video based on a text prompt and returns a local URL for it.
+ * This is a long-running operation.
+ * @param prompt The text prompt for the video.
+ * @param onProgress A callback to report progress updates.
+ * @returns A local Blob URL for the generated video.
+ */
+export async function generateVideo(prompt: string, onProgress: (update: { step: number; totalSteps: number }) => void): Promise<string> {
+    const totalSteps = VIDEO_GENERATION_STEPS.length;
+    
+    let operation = await ai.models.generateVideos({
+        model: 'veo-2.0-generate-001',
+        prompt: prompt,
+        config: {
+            numberOfVideos: 1
+        }
+    });
+    
+    let checks = 0;
+    const pollingSteps = 7; // Number of steps covered by polling (0-6)
+
+    while (!operation.done) {
+        // The current step is the number of checks we've done, capped at the last polling step.
+        const currentStep = Math.min(checks, pollingSteps - 1);
+        onProgress({ step: currentStep, totalSteps });
+        checks++;
+        
+        await new Promise(resolve => setTimeout(resolve, 8000)); // Poll every 8 seconds
+        
+        operation = await ai.operations.getVideosOperation({ operation: operation });
+    }
+
+    if (operation.error) {
+        throw new Error(`Video generation failed: ${operation.error.message}`);
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) {
+        throw new Error("Video generation completed, but no download link was found.");
+    }
+    
+    // Step before last: Downloading (index 7)
+    const downloadStep = totalSteps - 2;
+    onProgress({ step: downloadStep, totalSteps });
+
+    // The API key is available in this service file's scope
+    const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+    if (!response.ok) {
+        throw new Error(`Failed to download video file. Status: ${response.status}`);
+    }
+    const blob = await response.blob();
+    const videoUrl = URL.createObjectURL(blob);
+
+    // Final step: Finalizing (index 8)
+    const finalStep = totalSteps - 1;
+    onProgress({ step: finalStep, totalSteps });
+    return videoUrl;
+}
+
+
 /** For ImageView - Editing */
 export async function editImage(base64ImageData: string, mimeType: string, prompt: string): Promise<{ image: string; mimeType: string; text: string | null }> {
     const response = await ai.models.generateContent({
