@@ -22,7 +22,10 @@ const ImageView: React.FC = () => {
             setImages(generated);
         } catch (err) {
             console.error(err);
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            let errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            if (errorMessage.includes("billed users") || errorMessage.includes("API key not valid")) {
+                errorMessage = "The Image Generation API is not available for this API key. This may be a billing issue or an invalid key. Please check your Google AI Studio account.";
+            }
             setError(`Failed to generate images: ${errorMessage}`);
         } finally {
             setIsLoading(false);

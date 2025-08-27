@@ -8,6 +8,11 @@ if (!process.env.API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// A type representing the stream object returned by the Gemini API
+type GeminiStream = AsyncGenerator<GenerateContentResponse, any, unknown> & {
+    response: Promise<GenerateContentResponse>;
+};
+
 // --- Tool Definitions ---
 const calculatorTool: Tool = {
     functionDeclarations: [
@@ -48,24 +53,24 @@ const functions = {
  * @param messages The full conversation history.
  * @param onToolCall A callback invoked when a tool is being called.
  * @param registerToolCallSetter A function to register a setter for the tool call message.
- * @returns A promise that resolves to a GenerateContentStream object.
+ * @returns A promise that resolves to a GeminiStream object.
  */
 export async function runAgentStream(
     config: AgentConfig,
     messages: ChatMessage[],
     onToolCall: (name: string, args: any) => void,
     registerToolCallSetter: (setter: (message: string | null) => void) => void
-): Promise<AsyncGenerator<GenerateContentResponse, any, unknown>> {
+): Promise<GeminiStream> {
     const contents: Content[] = messages.map(msg => ({
         role: msg.role,
         parts: [{ text: msg.content }],
     }));
 
     const tools: Tool[] = [];
+    // Per API guidelines, googleSearch cannot be combined with other function-calling tools.
     if (config.tools.useSearch) {
         tools.push({ googleSearch: {} });
-    }
-    if (config.tools.useCalculator) {
+    } else if (config.tools.useCalculator) {
         tools.push(calculatorTool);
     }
 
@@ -75,9 +80,9 @@ export async function runAgentStream(
         ...(tools.length > 0 && { tools }),
     };
     
-    // The multi-step process is only required if the calculator is a potential tool.
+    // The multi-step process is only required if the calculator is a potential tool and search is not used.
     // Search grounding is handled by the model in a single step.
-    if (config.tools.useCalculator) {
+    if (!config.tools.useSearch && config.tools.useCalculator) {
         const firstResponse = await ai.models.generateContent({
             model,
             contents,
@@ -89,7 +94,7 @@ export async function runAgentStream(
         if (call) {
             onToolCall(call.name, call.args);
             // Call the function and get the result.
-            const result = functions[call.name as keyof typeof functions](call.args);
+            const result = functions[call.name as keyof typeof functions](call.args as { a: number; b: number; operation: string; });
             
             const toolResponseContent: Content[] = [
                 {
@@ -117,7 +122,7 @@ export async function runAgentStream(
             
             // Manually attach the response promise to match the real stream's behavior
             (stream as any).response = Promise.resolve(firstResponse);
-            return stream;
+            return stream as GeminiStream;
         }
     }
 
@@ -135,7 +140,7 @@ export async function generateChatResponseStream(
     useSearch: boolean,
     useTools: boolean,
     onToolCall: (name: string, args: any) => void
-): Promise<AsyncGenerator<GenerateContentResponse, any, unknown>> {
+): Promise<GeminiStream> {
     const config: AgentConfig = {
         name: 'Chat Assistant',
         systemInstruction: 'You are a helpful assistant.',
