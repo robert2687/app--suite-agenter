@@ -172,7 +172,7 @@ export async function generateImages(prompt: string): Promise<string[]> {
 }
 
 /** For ImageView - Editing */
-export async function editImage(base64ImageData: string, prompt: string): Promise<{ image: string; text: string | null }> {
+export async function editImage(base64ImageData: string, mimeType: string, prompt: string): Promise<{ image: string; mimeType: string; text: string | null }> {
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image-preview',
         contents: {
@@ -180,7 +180,7 @@ export async function editImage(base64ImageData: string, prompt: string): Promis
                 {
                     inlineData: {
                         data: base64ImageData,
-                        mimeType: 'image/jpeg', // The generation function creates JPEGs
+                        mimeType: mimeType,
                     },
                 },
                 {
@@ -194,6 +194,7 @@ export async function editImage(base64ImageData: string, prompt: string): Promis
     });
 
     let newImage: string | null = null;
+    let newMimeType: string | null = null;
     let newText: string | null = null;
 
     // The response can contain multiple parts (image, text)
@@ -202,14 +203,15 @@ export async function editImage(base64ImageData: string, prompt: string): Promis
             newText = part.text;
         } else if (part.inlineData) {
             newImage = part.inlineData.data;
+            newMimeType = part.inlineData.mimeType;
         }
     }
     
-    if (!newImage) {
+    if (!newImage || !newMimeType) {
         throw new Error("The model did not return an edited image. It may have refused the request. Response: " + (newText || "No text response."));
     }
 
-    return { image: newImage, text: newText };
+    return { image: newImage, mimeType: newMimeType, text: newText };
 }
 
 /** For DataAnalysisView */

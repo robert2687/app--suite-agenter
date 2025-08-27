@@ -1,28 +1,34 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { generateImages, editImage } from '../services/geminiService';
 import { Spinner } from './ui/Spinner';
 
+type ImageObject = {
+    data: string;
+    mimeType: string;
+};
+
 const ImageView: React.FC = () => {
     const [prompt, setPrompt] = useState('A photorealistic image of a cat wearing a tiny wizard hat, sitting on a pile of ancient books.');
-    const [images, setImages] = useState<string[]>([]);
+    const [images, setImages] = useState<ImageObject[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- State for the editing modal ---
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingState, setEditingState] = useState<{
         index: number;
-        originalData: string;
+        originalImage: ImageObject | null;
         prompt: string;
-        editedData: string | null;
+        editedImage: ImageObject | null;
         isLoading: boolean;
         error: string | null;
     }>({
         index: -1,
-        originalData: '',
+        originalImage: null,
         prompt: 'Add a small, friendly robot companion next to the cat.',
-        editedData: null,
+        editedImage: null,
         isLoading: false,
         error: null,
     });
@@ -37,7 +43,7 @@ const ImageView: React.FC = () => {
 
         try {
             const generated = await generateImages(prompt);
-            setImages(generated);
+            setImages(generated.map(imgData => ({ data: imgData, mimeType: 'image/jpeg' })));
         } catch (err) {
             console.error(err);
             let errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -50,13 +56,43 @@ const ImageView: React.FC = () => {
         }
     }, [prompt, isLoading]);
 
+    const handleUploadClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            setError('Please upload a valid image file.');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result as string;
+            const [, base64Data] = result.split(',');
+            if (base64Data) {
+                setImages(prev => [...prev, { data: base64Data, mimeType: file.type }]);
+                setError(null);
+            }
+        };
+        reader.onerror = () => {
+            setError('Failed to read the image file.');
+        };
+        reader.readAsDataURL(file);
+        event.target.value = ''; // Allow uploading the same file again
+    };
+
+
     // --- Handlers for editing logic ---
-    const handleOpenModal = (index: number) => {
+    const handleOpenModal = (index: number, image: ImageObject) => {
         setEditingState({
             index,
-            originalData: images[index],
+            originalImage: image,
             prompt: 'Make the wizard hat blue.',
-            editedData: null,
+            editedImage: null,
             isLoading: false,
             error: null,
         });
@@ -66,11 +102,11 @@ const ImageView: React.FC = () => {
     const handleCloseModal = () => setIsModalOpen(false);
 
     const handleStartEdit = async () => {
-        if (!editingState.prompt.trim() || editingState.isLoading) return;
-        setEditingState(prev => ({ ...prev, isLoading: true, error: null }));
+        if (!editingState.prompt.trim() || editingState.isLoading || !editingState.originalImage) return;
+        setEditingState(prev => ({ ...prev, isLoading: true, error: null, editedImage: null }));
         try {
-            const result = await editImage(editingState.originalData, editingState.prompt);
-            setEditingState(prev => ({ ...prev, editedData: result.image, isLoading: false }));
+            const result = await editImage(editingState.originalImage.data, editingState.originalImage.mimeType, editingState.prompt);
+            setEditingState(prev => ({ ...prev, editedImage: { data: result.image, mimeType: result.mimeType }, isLoading: false }));
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
             setEditingState(prev => ({ ...prev, error: `Edit failed: ${errorMessage}`, isLoading: false }));
@@ -78,9 +114,9 @@ const ImageView: React.FC = () => {
     };
     
     const handleAcceptEdit = () => {
-        if (editingState.editedData) {
+        if (editingState.editedImage) {
             setImages(currentImages => 
-                currentImages.map((img, i) => i === editingState.index ? editingState.editedData! : img)
+                currentImages.map((img, i) => i === editingState.index ? editingState.editedImage! : img)
             );
         }
         handleCloseModal();
@@ -91,11 +127,12 @@ const ImageView: React.FC = () => {
         <div className="p-4 sm:p-6 md:p-8 h-full flex flex-col">
             <div className="text-center mb-6">
                 <h2 className="text-3xl font-bold text-white">Image Generation & Editing</h2>
-                <p className="text-gray-400 mt-2">Describe an image to create it, then click to edit with AI.</p>
+                <p className="text-gray-400 mt-2">Describe an image to create it, or upload your own to edit with AI.</p>
             </div>
             
-            <form onSubmit={handleGenerate} className="w-full max-w-2xl mx-auto mb-6">
+            <form onSubmit={handleGenerate} className="w-full max-w-3xl mx-auto mb-6">
                 <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" className="hidden" />
                     <input
                         type="text"
                         value={prompt}
@@ -104,6 +141,18 @@ const ImageView: React.FC = () => {
                         disabled={isLoading}
                         className="flex-1 w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
                     />
+                    <button
+                        type="button"
+                        onClick={handleUploadClick}
+                        disabled={isLoading}
+                        title="Upload an image to edit"
+                        className="w-full sm:w-auto px-4 py-3 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 disabled:bg-gray-700 disabled:cursor-not-allowed transition-colors flex justify-center items-center gap-2"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                        </svg>
+                        <span>Upload</span>
+                    </button>
                     <button
                         type="submit"
                         disabled={isLoading || !prompt.trim()}
@@ -121,7 +170,7 @@ const ImageView: React.FC = () => {
             )}
 
             <div className="flex-1 overflow-y-auto">
-                {isLoading && (
+                {isLoading && images.length === 0 && (
                     <div className="flex justify-center items-center h-full">
                         <div className="text-center">
                            <Spinner size="lg"/>
@@ -136,25 +185,26 @@ const ImageView: React.FC = () => {
                             <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
-                            <p className="mt-4">Your generated images will appear here.</p>
+                            <p className="mt-4">Your generated or uploaded images will appear here.</p>
+                             <p className="mt-2 text-sm">Use the controls above to start.</p>
                         </div>
                     </div>
                 )}
 
                 {images.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4">
-                        {images.map((base64Image, index) => (
+                        {images.map((image, index) => (
                             <div 
                                 key={index} 
-                                className="aspect-square bg-gray-800 rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition-transform duration-300 cursor-pointer group"
-                                onClick={() => handleOpenModal(index)}
+                                className="aspect-square bg-gray-800 rounded-lg overflow-hidden shadow-lg transform hover:scale-105 transition-transform duration-300 cursor-pointer group relative"
+                                onClick={() => handleOpenModal(index, image)}
                                 role="button"
                                 tabIndex={0}
-                                onKeyDown={(e) => e.key === 'Enter' && handleOpenModal(index)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleOpenModal(index, image)}
                             >
                                 <img
-                                    src={`data:image/jpeg;base64,${base64Image}`}
-                                    alt={`Generated image ${index + 1}`}
+                                    src={`data:${image.mimeType};base64,${image.data}`}
+                                    alt={`Generated or uploaded image ${index + 1}`}
                                     className="w-full h-full object-cover"
                                 />
                                 <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all flex items-center justify-center">
@@ -178,17 +228,17 @@ const ImageView: React.FC = () => {
                            {/* Original Image */}
                            <div>
                                 <h3 className="text-lg font-semibold text-gray-300 mb-2 text-center">Original</h3>
-                                <img src={`data:image/jpeg;base64,${editingState.originalData}`} alt="Original for editing" className="w-full h-auto object-contain rounded-md aspect-square bg-gray-900"/>
+                                {editingState.originalImage && <img src={`data:${editingState.originalImage.mimeType};base64,${editingState.originalImage.data}`} alt="Original for editing" className="w-full h-auto object-contain rounded-md aspect-square bg-gray-900"/>}
                            </div>
                            {/* Edited Image */}
                            <div className="flex flex-col justify-center items-center">
                                 <h3 className="text-lg font-semibold text-gray-300 mb-2 text-center">Edited</h3>
                                 <div className="w-full aspect-square bg-gray-900 rounded-md flex justify-center items-center">
                                     {editingState.isLoading && <Spinner size="lg" />}
-                                    {!editingState.isLoading && editingState.editedData && (
-                                        <img src={`data:image/jpeg;base64,${editingState.editedData}`} alt="Edited result" className="w-full h-auto object-contain rounded-md"/>
+                                    {!editingState.isLoading && editingState.editedImage && (
+                                        <img src={`data:${editingState.editedImage.mimeType};base64,${editingState.editedImage.data}`} alt="Edited result" className="w-full h-auto object-contain rounded-md"/>
                                     )}
-                                    {!editingState.isLoading && !editingState.editedData && (
+                                    {!editingState.isLoading && !editingState.editedImage && (
                                         <p className="text-gray-500">Your edit will appear here.</p>
                                     )}
                                 </div>
@@ -217,7 +267,7 @@ const ImageView: React.FC = () => {
                             </div>
                              <div className="flex justify-end gap-2">
                                 <button onClick={handleCloseModal} className="px-4 py-2 bg-gray-600 text-sm font-semibold rounded-lg hover:bg-gray-700">Close</button>
-                                <button onClick={handleAcceptEdit} disabled={!editingState.editedData} className="px-4 py-2 bg-green-600 text-sm font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-600/50">Accept & Close</button>
+                                <button onClick={handleAcceptEdit} disabled={!editingState.editedImage} className="px-4 py-2 bg-green-600 text-sm font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-600/50">Accept & Close</button>
                              </div>
                         </footer>
                     </div>
